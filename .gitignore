@@ -1,0 +1,13 @@
+# Учётные данные
+credentials.conf
+*.secret
+.env
+
+# Собранные пакеты
+dist/
+*.deb
+
+# Временные файлы
+*.log
+*.bak
+*~
