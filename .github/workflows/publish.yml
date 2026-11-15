@@ -26,7 +26,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev gnupg
+          sudo apt-get install -y dpkg-dev gnupg apt-utils
 
       - name: Build DEB package
         run: |
