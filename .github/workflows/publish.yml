@@ -45,6 +45,7 @@ jobs:
           mkdir -p public
           cp dist/*.deb public/
           cp connect-archive-keyring.gpg public/
+          cp install.sh public/
 
           cd public
           dpkg-scanpackages . /dev/null > Packages
