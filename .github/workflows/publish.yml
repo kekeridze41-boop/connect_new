@@ -1,3 +1,4 @@
+
 name: Publish Connect APT Repository
 
 on:
@@ -39,8 +40,8 @@ jobs:
 
           bash packaging/build.sh "$VERSION"
 
-       - name: Create APT repository
-         run: |
+      - name: Create APT repository
+        run: |
           mkdir -p public
           cp dist/*.deb public/
           cp connect-archive-keyring.gpg public/
@@ -94,6 +95,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
     permissions:
       pages: write
       id-token: write
