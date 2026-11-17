@@ -123,8 +123,7 @@ if {$Diagnostics} {
         }
 
         unknown {
-            puts "Ошибка: неизвестный формат порта $Port"
-            exit 1
+            puts "Формат порта будет проверен после подключения"
         }
     }
 
@@ -338,14 +337,91 @@ if {$DeviceType eq "cdata"} {
     }
 }
 
+# Имена физических интерфейсов из первого столбца таблицы MES.
+proc ParseSwitchPorts {output} {
+    regsub -all {\x1b\[[0-?]*[ -/]*[@-~]} $output "" output
+    set ports [list]
+    foreach line [split $output "\n"] {
+        if {[regexp -nocase {^\s*([a-z]+[0-9]+(?:/[0-9]+)+)\s+} $line -> port]} {
+            if {[lsearch -nocase -exact $ports $port] < 0} {
+                lappend ports $port
+            }
+        }
+    }
+    return $ports
+}
+
+# Проверяем порт по оборудованию, а не по формату аргумента.
+if {$Diagnostics && $DeviceType in {eltex_mes snr unknown}} {
+    puts "\nПолучение списка интерфейсов: show interface status"
+    set InterfaceOutput ""
+    set InterfaceComplete 0
+    send -- "show interface status\r"
+    expect {
+        -re {--More--|---- More ----} {
+            append InterfaceOutput $expect_out(buffer)
+            send -- " "
+            exp_continue
+        }
+        -re {(?m)^[^\r\n]*[>#]\s*$} {
+            append InterfaceOutput $expect_out(buffer)
+            set InterfaceComplete 1
+        }
+        full_buffer {
+            append InterfaceOutput $expect_out(buffer)
+            exp_continue
+        }
+        timeout {
+            puts "Не удалось дождаться завершения show interface status"
+        }
+        eof {
+            puts "Соединение закрыто"
+            exit 1
+        }
+    }
+
+    set AvailablePorts [ParseSwitchPorts $InterfaceOutput]
+    if {!$InterfaceComplete || [llength $AvailablePorts] == 0} {
+        puts "Не удалось проверить порт по таблице интерфейсов. Переход в интерактивный режим."
+        set Diagnostics 0
+    } else {
+        while {1} {
+            set PortIndex [lsearch -nocase -exact $AvailablePorts $Port]
+            if {$PortIndex >= 0} {
+                set Port [lindex $AvailablePorts $PortIndex]
+                puts "Выбран порт: $Port"
+                break
+            }
+            puts "Порт «$Port» не найден на коммутаторе."
+            puts "Примеры доступных портов: [join [lrange $AvailablePorts 0 9] {, }]"
+            puts -nonewline "Введите порт или нажмите Enter для перехода в интерактивный режим: "
+            flush stdout
+            # Читаем локальный ввод, не отправляя его оборудованию.
+            if {[gets stdin Port] < 0 || [string trim $Port] eq ""} {
+                set Diagnostics 0
+                puts "Выбор порта отменён. Переход в интерактивный режим."
+                break
+            }
+            set Port [string trim $Port]
+        }
+    }
+}
+
 # Формирование команд диагностики
 set Commands [list]
+set CommandMessages [list]
 
 if {$Diagnostics} {
 
     switch -- $DeviceType {
 
         cdata {
+            set CommandMessages [list \
+                "Выбор интерфейса GPON" \
+                "Состояние ONU" \
+                "Оптические параметры ONU" \
+                "Состояние Ethernet-портов абонента" \
+            ]
             set Commands [list \
                 "interface gpon 0/$Slot" \
                 "show ont run-info $Branch $Onu" \
@@ -355,6 +431,12 @@ if {$Diagnostics} {
         }
 
         zte_c320 {
+            set CommandMessages [list \
+                "Состояние ONU" \
+                "Состояние Ethernet-портов абонента" \
+                "Оптическое затухание линии" \
+                "MAC-адрес абонента" \
+            ]
             set OnuInterface "gpon-onu_$Port"
 
             set Commands [list \
@@ -366,6 +448,12 @@ if {$Diagnostics} {
         }
 
         zte_c610 {
+            set CommandMessages [list \
+                "Состояние ONU" \
+                "Состояние Ethernet-портов абонента" \
+                "MAC-адрес абонента" \
+                "Оптическое затухание линии" \
+            ]
             set OnuInterface "gpon_onu-$Port"
 
             # Преобразование 1/3/1:19 -> 1/3/1.19:1
@@ -383,6 +471,11 @@ if {$Diagnostics} {
         }
 
         eltex_ma4000 {
+            set CommandMessages [list \
+                "Состояние ONT" \
+                "Состояние портов ONT" \
+                "MAC-адрес абонента" \
+            ]
             set Commands [list \
                 "show interface ont $Port state" \
                 "show interface ont $Port ports" \
@@ -401,8 +494,9 @@ if {[llength $Commands] > 0} {
 
     puts "\nДиагностика $DeviceType: $Port"
 
-    foreach Command $Commands {
+    foreach Command $Commands Message $CommandMessages {
 
+        puts "\n$Message"
         puts "\n>>> $Command"
         send -- "$Command\r"
 
@@ -413,7 +507,8 @@ if {[llength $Commands] > 0} {
             }
 
             -re {(?m)^[^\r\n]*[>#]\s*$} {
-                # Команда завершена
+                # Пауза для чтения результата, включая последнюю команду.
+                after 3000
             }
 
             timeout {
